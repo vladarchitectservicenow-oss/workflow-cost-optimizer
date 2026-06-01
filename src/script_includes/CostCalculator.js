@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Vladimir Kapustin
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * CostCalculator — Computes per-workflow cost across AI platforms.
  * Pricing models are configurable via x_snc_wco_pricing table.

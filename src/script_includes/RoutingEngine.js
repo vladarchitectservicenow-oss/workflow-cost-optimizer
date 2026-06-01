@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Vladimir Kapustin
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * RoutingEngine — Generates optimal AI platform routing map.
  * Uses constraint-satisfaction: compliance (hard), latency (soft), budget (hard).

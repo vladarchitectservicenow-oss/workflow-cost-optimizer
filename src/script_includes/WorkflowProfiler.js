@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Vladimir Kapustin
+// SPDX-License-Identifier: AGPL-3.0-only
+
 /**
  * WorkflowProfiler — Profiles catalog items and incident categories
  * by channel affinity, volume, complexity, data sensitivity.
