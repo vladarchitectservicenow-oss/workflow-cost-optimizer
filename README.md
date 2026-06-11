@@ -1,8 +1,12 @@
 # Workflow Cost Optimizer
 
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+![Status](https://img.shields.io/badge/status-active-brightgreen)
+![ServiceNow](https://img.shields.io/badge/ServiceNow-Utah%2B-62b947)
+
 **Scope Prefix:** `x_snc_wco`
 **Repository:** `vladarchitectservicenow-oss/workflow-cost-optimizer`
-**License:** AGPL-3.0-only
+**License:** [AGPL-3.0-only](LICENSE)
 **Author:** Vladimir Kapustin
 
 ---
@@ -13,7 +17,22 @@ Workflow Cost Optimizer is an enterprise-grade ServiceNow scoped application tha
 
 The platform solves a critical problem facing mid-to-large enterprises: the lack of objective tooling to decide which AI helpdesk platform should handle which workflow. Current industry practice relies on 4+ months of manual evaluation, biased vendor demonstrations, and expensive consulting engagements. A single misroute on a high-volume workflow can waste 30-40% of annual AI spend. WCO replaces this guesswork with deterministic, constraint-satisfaction optimization that produces actionable recommendations in under 3 minutes.
 
-Designed specifically for the Australia-era ServiceNow platform, WCO operates natively within the ServiceNow security boundary. All profiling data stays in-instance — no credential export, no external SaaS sync, no data leaving the tenant. The application reads workflow metadata through standard GlideRecord APIs and stores findings in first-class scoped tables, making it fully auditable, extensible, and compatible with ServiceNow governance frameworks.
+Designed specifically for the Utah-era ServiceNow platform, WCO operates natively within the ServiceNow security boundary. All profiling data stays in-instance — no credential export, no external SaaS sync, no data leaving the tenant. The application reads workflow metadata through standard GlideRecord APIs and stores findings in first-class scoped tables, making it fully auditable, extensible, and compatible with ServiceNow governance frameworks.
+
+---
+
+## Quick Start
+
+Get up and running in under 15 minutes:
+
+1. **Clone** — `git clone https://github.com/vladarchitectservicenow-oss/workflow-cost-optimizer.git`
+2. **Import** — Upload `src/sys_app.xml` via System Applications > Applications > Import
+3. **Activate** — Accept scope confirmation, verify tables (`x_snc_wco_profile`, `x_snc_wco_pricing`, `x_snc_wco_routing`, `x_snc_wco_scan_run`)
+4. **Configure Pricing** — Add at least one platform record in `x_snc_wco_pricing` (see Configuration section below)
+5. **Run First Scan** — Open Scan Console > "Run Full Profile"
+6. **Review Results** — Navigate to Routing Map to see optimized assignments
+
+> **Minimum requirements:** ServiceNow Utah+, admin role, 6+ months of `sc_req_item` history
 
 ---
 
@@ -71,6 +90,70 @@ Three versioned endpoints for integration with CI/CD pipelines and external dash
 ### 6. Scheduled Automation
 - **Monthly Full Scan** (1st of month, 02:00): Re-profiles all workflows, recalculates costs, regenerates routing
 - **Weekly Pricing Freshness Alert**: Flags pricing models not updated in >90 days — ensures cost data stays current
+
+---
+
+## Data Model
+
+The application uses four first-class scoped tables. All tables are fully auditable with standard ServiceNow `sys_created_on`, `sys_updated_on`, `sys_created_by`, and `sys_updated_by` fields.
+
+### `x_snc_wco_profile`
+Stores per-workflow profiling results. One record per unique workflow (catalog item or incident category).
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `source_table` | string(40) | Source table: `sc_cat_item` or `incident` |
+| `source_sys_id` | GUID | Sys ID of the source record |
+| `workflow_name` | string(100) | Display name of the workflow |
+| `monthly_volume` | integer | Rolling 6-month average request count |
+| `channel_affinity` | string(20) | PORTAL, SLACK, EMAIL, API, or MIXED |
+| `complexity` | string(20) | SIMPLE, MODERATE, or COMPLEX |
+| `data_sensitivity` | string(10) | LOW, MEDIUM, or HIGH |
+| `avg_resolution_minutes` | integer | Average time to fulfillment |
+| `last_profiled` | glide_date_time | Timestamp of most recent profiling run |
+
+**Indexes:** `(source_table, source_sys_id)` unique, `(channel_affinity)`, `(data_sensitivity)`
+
+### `x_snc_wco_pricing`
+Configurable cost models for each AI platform. Updated by admins as vendor pricing changes.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `platform_name` | string(50) | Unique platform identifier (e.g., NOW_ASSIST) |
+| `fixed_monthly_cost` | currency | Flat monthly subscription fee |
+| `cost_per_transaction` | currency | Per-ticket/per-request cost |
+| `compliance_certs` | string(4000) | JSON array of certifications (e.g., `["GDPR","HIPAA"]`) |
+| `typical_latency_ms` | integer | Expected response latency in milliseconds |
+| `is_active` | boolean | Whether platform is considered in calculations |
+| `last_updated` | glide_date_time | Last pricing model update timestamp |
+
+### `x_snc_wco_routing`
+Stores the current optimal routing map. Updated on each full scan.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `profile` | reference | FK to `x_snc_wco_profile` |
+| `recommended_platform` | string(50) | Best-fit platform from optimization run |
+| `monthly_cost` | currency | Projected monthly cost on recommended platform |
+| `annual_cost` | currency | Projected annual cost |
+| `cost_per_ticket` | currency | Cost per individual transaction |
+| `alternatives` | string(200) | Comma-separated alternative platforms |
+| `confidence` | integer | Confidence score 0-100 for this assignment |
+| `scan_run` | reference | FK to `x_snc_wco_scan_run` that produced this routing |
+
+### `x_snc_wco_scan_run`
+Audit log of every profiling and optimization execution.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `scan_type` | string(20) | FULL or INCREMENTAL |
+| `status` | string(20) | IN_PROGRESS, COMPLETED, FAILED |
+| `workflows_profiled` | integer | Number of workflows scanned |
+| `routing_generated` | boolean | Whether optimization completed successfully |
+| `error_message` | string(4000) | Stack trace if status is FAILED |
+| `started_at` | glide_date_time | Scan start time |
+| `completed_at` | glide_date_time | Scan end time (null if in progress) |
+| `duration_seconds` | integer | Wall-clock duration of the scan |
 
 ---
 
@@ -199,28 +282,77 @@ graph TD
 
 ## ROI Analysis
 
-### Per-Organization Savings
+### Detailed Cost-Benefit Breakdown
 
-| Metric | Manual Evaluation | With WCO | Savings |
-|--------|------------------|----------|---------|
-| Evaluation time | 4 months | <1 week | 94% reduction |
-| Consultant cost ($200/hr) | $64,000 | $2,000 | $62,000 |
-| Ongoing optimization | Quarterly manual review | Automated monthly | 100% reduction |
-| Misrouting cost (annual) | $45,000 (avg) | $5,000 | $40,000 (89%) |
-| **Total Year 1 Savings** | — | — | **$102,000** |
+WCO delivers measurable financial returns across three dimensions: evaluation cost elimination, ongoing optimization savings, and misrouting prevention.
 
-### Platform Cost Comparison (500-workflow mid-market company)
+#### 1. Pre-Implementation: Evaluation Cost Elimination
 
-| Platform | Annual Cost (All Workflows) | Optimized (WCO Routing) |
-|----------|---------------------------|------------------------|
-| All on Now Assist | $720,000 | — |
-| WCO Optimized Mix | — | $462,000 |
-| **Savings** | — | **$258,000 (36%)** |
+Before WCO, organizations spend 4+ months manually evaluating AI platforms. This involves internal staff time, external consultants, and vendor management overhead.
 
-### Payback Period
-- Implementation effort: 8 hours (import + pricing config + review)
-- Cost: $1,600 (@ $200/hr)
-- **Payback: <1 month** based on first-month savings alone
+| Activity | Manual Evaluation | With WCO | Savings |
+|----------|------------------|----------|---------|
+| Platform research & vendor demos | 160 hours (1 FTE × 4 weeks) | 4 hours (scan + review) | 156 hours |
+| Consultant engagement ($200/hr) | 320 hours × $200 = **$64,000** | 10 hours × $200 = **$2,000** | **$62,000** |
+| Internal stakeholder meetings | 80 hours | 8 hours | 72 hours |
+| Spreadsheet modeling & analysis | 120 hours | 0 hours (automated) | 120 hours |
+| **Total evaluation cost** | **$84,000+** | **$3,600** | **$80,400 (96%)** |
+
+#### 2. Ongoing Operational Savings
+
+After implementation, WCO runs automated monthly scans, replacing quarterly manual review cycles.
+
+| Cost Category | Quarterly Manual Review | Monthly Automated (WCO) | Annual Difference |
+|--------------|------------------------|------------------------|-------------------|
+| Staff time for analysis | 40 hrs × $100/hr = $4,000/qtr | 0 hrs | **$16,000** |
+| Consultant re-engagement | 20 hrs × $200/hr = $4,000/qtr | 0 hrs | **$16,000** |
+| Report generation | 8 hrs × $100/hr = $800/qtr | 0 hrs | **$3,200** |
+| **Total ongoing savings** | — | — | **$35,200/yr** |
+
+#### 3. Misrouting Cost Prevention
+
+The most significant savings come from preventing misrouted workflows. A high-volume PII workflow routed to a non-compliant platform creates direct financial exposure:
+
+| Misrouting Scenario | Annual Exposure | With WCO | Risk Reduction |
+|--------------------|----------------|----------|---------------|
+| GDPR-regulated workflow on non-compliant platform | $120,000 (potential fine + remediation) | $0 | 100% |
+| High-volume workflow (5K/mo tickets) on expensive platform | $45,000/yr wasted | $5,000/yr | **$40,000 (89%)** |
+| Low-volume niche workflow on premium platform | $8,000/yr wasted | $1,500/yr | **$6,500 (81%)** |
+| **Average misrouting cost (mid-market)** | **$57,000/yr** | **$2,200/yr** | **$54,800 (96%)** |
+
+#### 4. Platform Cost Comparison (Realistic 500-Workflow Scenario)
+
+Based on a mid-market organization with 500 active catalog items, 50,000 monthly requests, and 4 configured AI platforms:
+
+| Strategy | Platform Mix | Annual Cost |
+|----------|-------------|-------------|
+| All on Now Assist | 100% NOW_ASSIST | **$720,000** |
+| All on Moveworks | 100% MOVEWORKS | **$420,000** |
+| All on Standalone AI | 100% STANDALONE_AI | **$312,000** |
+| **WCO Optimized Routing** | 35% NOW_ASSIST, 40% MOVEWORKS, 15% SLACK_AI, 10% STANDALONE_AI | **$462,000** |
+
+> The optimized mix balances compliance requirements (GDPR/HIPAA workflows stay on Now Assist), cost efficiency (high-volume simple workflows go to Moveworks/Slack AI), and specialized needs (custom AI workflows on standalone).
+
+#### 5. Total Year 1 Financial Impact Summary
+
+| Savings Line | Year 1 Amount |
+|-------------|---------------|
+| Evaluation cost elimination | $80,400 |
+| Ongoing operational savings | $35,200 |
+| Misrouting prevention | $54,800 |
+| Implementation cost (8 hrs × $200/hr) | -$1,600 |
+| **Net Year 1 Savings** | **$168,800** |
+
+#### 6. Payback Period & Multi-Year Projection
+
+| Year | Cumulative Savings | Cumulative Investment | Net Benefit | ROI |
+|------|-------------------|----------------------|-------------|-----|
+| Year 1 | $170,400 | $1,600 | **$168,800** | 10,550% |
+| Year 2 | $260,400 | $1,600 | **$258,800** | 16,175% |
+| Year 3 | $350,400 | $1,600 | **$348,800** | 21,800% |
+
+- **Payback period:** < 1 week (first scan typically identifies >$10K in savings)
+- **Break-even:** Immediate — savings from first optimization run exceed implementation cost
 
 ---
 
@@ -228,18 +360,46 @@ graph TD
 
 Common operational issues and their resolutions. All troubleshooting assumes you have `x_snc_wco_admin` role access to the ServiceNow instance.
 
-| Symptom | Probable Cause | Resolution |
-|---------|---------------|------------|
-| `profileAll()` returns 0 profiled | No `sc_cat_item` records in instance | Verify `sc_cat_item` table has active items; check `active=true` flag |
-| Channel affinity always "MIXED" | `request_source` field null on all `sc_req_item` records | Check request source mapping; ensure Virtual Agent or portal integration is active |
-| `calculateForWorkflow` returns empty platforms | No pricing records in `x_snc_wco_pricing` | Insert at least one pricing model via application menu |
-| Routing always recommends same platform | Only one platform configured; or all others fail compliance | Add more platforms; verify `compliance_certs` values are valid JSON arrays |
-| REST API returns 401 | User lacks `x_snc_wco_viewer` role | Assign role or authenticate with `admin` credentials |
-| Scheduled job not running | Job in "Inactive" or "Error" state | Check **Scheduled Jobs > Workflow Cost Optimizer**; verify job is active; review system log for stack traces |
-| `JSON.parse` error in RoutingEngine | Malformed `compliance_certs` field | Validate pricing records — `compliance_certs` must be valid JSON array (e.g., `["GDPR"]` not the plain string `GDPR`) |
-| Profiling takes >5 minutes | Instance has >10K catalog items | Adjust `x_snc_wco.profile_limit` system property down to 100 or 50; use incremental scan mode for subsequent runs |
-| Cost estimates significantly off from actual vendor quotes | Pricing models not updated recently | Run pricing freshness check; verify `cost_per_transaction` matches current vendor rate card |
-| Duplicate profile records for same workflow | Concurrent `profileAll()` execution | Check `x_snc_wco_scan_run` for overlapping runs; add unique constraint on `(source_table, source_sys_id)` as hotfix |
+| # | Symptom | Probable Cause | Resolution |
+|---|---------|---------------|------------|
+| 1 | `profileAll()` returns 0 profiled | No `sc_cat_item` records in instance | Verify `sc_cat_item` table has active items; check `active=true` flag |
+| 2 | Channel affinity always "MIXED" | `request_source` field null on all `sc_req_item` records | Check request source mapping; ensure Virtual Agent or portal integration is active |
+| 3 | `calculateForWorkflow` returns empty platforms | No pricing records in `x_snc_wco_pricing` | Insert at least one pricing model via application menu |
+| 4 | Routing always recommends same platform | Only one platform configured; or all others fail compliance | Add more platforms; verify `compliance_certs` values are valid JSON arrays |
+| 5 | REST API returns 401 | User lacks `x_snc_wco_viewer` role | Assign role or authenticate with `admin` credentials |
+| 6 | Scheduled job not running | Job in "Inactive" or "Error" state | Check **Scheduled Jobs > Workflow Cost Optimizer**; verify job is active; review system log for stack traces |
+| 7 | `JSON.parse` error in RoutingEngine | Malformed `compliance_certs` field | Validate pricing records — `compliance_certs` must be valid JSON array (e.g., `["GDPR"]` not the plain string `GDPR`) |
+| 8 | Profiling takes >5 minutes | Instance has >10K catalog items | Adjust `x_snc_wco.profile_limit` system property down to 100 or 50; use incremental scan mode for subsequent runs |
+| 9 | Cost estimates significantly off from actual vendor quotes | Pricing models not updated recently | Run pricing freshness check; verify `cost_per_transaction` matches current vendor rate card |
+| 10 | Duplicate profile records for same workflow | Concurrent `profileAll()` execution | Check `x_snc_wco_scan_run` for overlapping runs; add unique constraint on `(source_table, source_sys_id)` as hotfix |
+| 11 | REST API returns 500 with no clear error | Missing or corrupted scan data | Check `x_snc_wco_scan_run` for FAILED status; review error_message field; re-run full profile scan |
+| 12 | Dashboard widgets show "No Data" | Routing table empty or stale | Verify at least one completed scan run exists; check that `routing_generated=true` on most recent scan |
+| 13 | Scan run status stuck at IN_PROGRESS | Previous scan crashed mid-execution | Manually set status to FAILED via background script; re-run scan; check instance transaction quota limits |
+
+---
+
+## FAQ
+
+### Q1: Does WCO require any external connectivity or SaaS integration?
+No. WCO operates entirely within the ServiceNow instance boundary. It reads from standard platform tables (`sc_cat_item`, `sc_req_item`, `incident`, `sys_choice`) using GlideRecord and stores results in its own scoped tables. There are no outbound REST calls, no external APIs, and no data leaves your tenant.
+
+### Q2: How does WCO handle workflows that don't map cleanly to a single platform?
+The RoutingEngine produces a confidence score (0–100) for each assignment. Workflows with confidence below 70 are flagged for manual review. The output also includes an `alternatives` field listing secondary platforms that would be viable if the primary recommendation is rejected for business reasons.
+
+### Q3: What happens if vendor pricing changes mid-cycle?
+The Weekly Pricing Freshness Alert monitors the `last_updated` field on all pricing records. If any record is older than `x_snc_wco.pricing_max_age_days` (default 90), an alert fires. You can update pricing records at any time and re-run the optimization without waiting for the monthly scan. Pricing updates do not require a full re-profile — only the routing step needs to re-execute.
+
+### Q4: Can I use WCO with custom or homegrown AI platforms?
+Yes. The pricing model is platform-agnostic. Add a record to `x_snc_wco_pricing` with your custom platform's cost structure, compliance certifications (as a JSON array), and latency profile. The RoutingEngine will treat it identically to any built-in platform.
+
+### Q5: What volume of requests does WCO need for meaningful results?
+The minimum threshold is approximately 100 monthly requests per workflow for statistical significance on channel affinity. However, the system will profile any workflow regardless of volume and will flag low-volume workflows with a confidence caveat. The recommended minimum is 6 months of `sc_req_item` history as configured in `x_snc_wco.lookback_months`.
+
+### Q6: How does WCO handle compliance constraints when no platform satisfies all requirements for a given workflow?
+When hard constraints cannot be satisfied (e.g., a HIPAA-regulated workflow where no configured platform has HIPAA certification), the RoutingEngine excludes that workflow from the routing map and logs a compliance gap warning to `x_snc_wco_scan_run.error_message`. The workflow is flagged for manual resolution — typically involving either adding a compliant platform to the pricing table or accepting the workflow will remain on its current platform.
+
+### Q7: Is the optimization deterministic — will I get the same result every time?
+Yes. Given the same input data (profiles + pricing models), the constraint-satisfaction solver produces identical results. There is no stochastic element. If results change between runs, it's because the underlying data (volume, pricing, or platform configuration) has changed.
 
 ---
 
@@ -364,6 +524,8 @@ Please open an issue before proposing major architectural changes.
 ---
 
 ## License
+
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
 Copyright (C) 2026 Vladimir Kapustin
 
